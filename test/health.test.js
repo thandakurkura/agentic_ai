@@ -30,7 +30,7 @@ describe('Server Endpoints', () => {
     }
   });
 
-  test('GET /health returns 200 with status "ok"', async () => {
+  test('GET /health returns 200 with status "ok" and dataset counts', async () => {
     const res = await fetch(`${baseUrl}/health`);
     assert.equal(res.status, 200);
 
@@ -39,6 +39,13 @@ describe('Server Endpoints', () => {
     assert.equal(typeof body.uptime, 'number');
     assert.ok(body.uptime >= 0);
     assert.equal(typeof body.version, 'string');
+    assert.ok(body.data, 'Health check should include data counts');
+    assert.equal(typeof body.data.perfumes, 'number');
+    assert.ok(body.data.perfumes > 0);
+    assert.equal(typeof body.data.colour_rules, 'number');
+    assert.equal(typeof body.data.patterns, 'number');
+    assert.equal(typeof body.data.pairing_rules, 'number');
+    assert.equal(typeof body.data.tone_mappings, 'number');
   });
 
   test('POST /dev/chat returns orchestrator response in development', async () => {

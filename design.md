@@ -88,6 +88,9 @@ stylescent/
     agent/
       orchestrator.js      # the 7-step loop
       slots.js             # slot schema + understand step
+      rules.js             # thresholds, defaults, formality mappings, relaxation
+      messages.js          # user-facing text templates
+      session.js           # in-memory multi-turn session store
       planner.js           # builds the visible plan
       wardrobe.js          # wardrobe specialist (uses colour + pattern tools)
       fragrance.js         # fragrance specialist (uses matcher)
@@ -95,12 +98,17 @@ stylescent/
       composer.js          # drafts the reply from structured results
       prompts.js           # all system prompts in one place
     tools/
+      index.js             # createTools(data) wrapper
       colour.js
       pattern.js
       perfume.js
       image.js             # image -> garment JSON via vision
       outputs.js           # CSV, Markdown plan, mood-board PNG
     data/
+      enums.js             # canonical constants
+      schemas.js           # zod schemas
+      inference.js         # deterministic inference heuristics
+      aliases.js           # occasion aliases for matcher credit
       load.js              # loads and validates datasets at startup
     nonilion/
       adapter.js           # interface implementation (stub until guide arrives)
@@ -108,6 +116,11 @@ stylescent/
     dev/
       cli.js               # `npm run chat`
       devRoutes.js         # POST /dev/chat
+  scripts/
+    import-research.js     # npm run data:import
+    data-report.js         # npm run data:report
+    try-match.js           # npm run match CLI
+    run-golden.js          # npm run golden:live
   test/
     colour.test.js
     pattern.test.js
@@ -125,19 +138,28 @@ All files are validated with `zod` at startup. If validation fails, the server m
 ```json
 {
   "id": "p_001",
+  "rank": 1,
   "name": "string",
   "brand": "string",
+  "marketed_for": "men | unisex | women",
   "family": "woody | floral | citrus | fresh | oriental | gourmand | aromatic | fruity",
   "notes": { "top": ["string"], "heart": ["string"], "base": ["string"] },
+  "longevity_hours": "6-8",
+  "longevity_min_hours": 6,
+  "longevity_max_hours": 8,
+  "longevity": "short | medium | long",
+  "projection": "soft | moderate | strong",
   "seasons": ["spring", "summer", "autumn", "winter"],
   "occasions": ["college_fest", "office", "date_night", "wedding", "casual", "interview", "party", "festival_traditional"],
   "time_of_day": ["day", "evening", "night"],
   "vibe": ["confident", "fresh", "elegant", "playful", "bold", "calm", "romantic"],
-  "intensity": "light | moderate | strong",
-  "longevity": "short | medium | long",
   "price_band": "budget | mid | premium",
+  "sources": ["https://..."],
+  "source_agreement": "high | medium | low",
+  "confidence": "high | medium | low",
   "verified": false,
-  "source": "team-curated sample"
+  "inferred_fields": ["time_of_day", "vibe"],
+  "source": "team research via web search"
 }
 ```
 
@@ -149,7 +171,8 @@ All files are validated with `zod` at startup. If validation fails, the server m
   "named_colours": [{ "name": "string", "hex": "#RRGGBB", "temperature": "warm | cool | neutral" }],
   "season_palettes": { "spring": ["#hex"], "summer": ["#hex"], "autumn": ["#hex"], "winter": ["#hex"] },
   "occasion_palettes": { "college_fest": ["#hex"], "office": ["#hex"] },
-  "harmony_angles": { "complementary": [180], "analogous": [30, -30], "triadic": [120, 240] }
+  "harmony_angles": { "complementary": [180], "analogous": [30, -30], "triadic": [120, 240] },
+  "wearable_bounds": { "s": [0.2, 0.9], "l": [0.2, 0.85] }
 }
 ```
 
@@ -168,7 +191,14 @@ All files are validated with `zod` at startup. If validation fails, the server m
 
 ### 4.4 `tone_map.json`
 
-Maps outfit characteristics to fragrance vibe tags, for example `{ "dark_bold_palette": ["bold", "confident"], "pastel_palette": ["fresh", "calm"] }`. This is how the wardrobe result influences the fragrance choice.
+An array of `{ key, description, vibes[] }` objects mapping outfit characteristics to fragrance vibe tags, for example:
+```json
+[
+  { "key": "dark_bold_palette", "description": "Dark and bold palettes", "vibes": ["bold", "confident"] },
+  { "key": "pastel_palette", "description": "Pastel colour palettes", "vibes": ["fresh", "calm"] }
+]
+```
+This is how the wardrobe result influences the fragrance choice.
 
 ### 4.5 Garment (used in requests and tool calls)
 
@@ -188,38 +218,84 @@ All tools are pure functions (no network, no LLM) except `image.js`.
 
 ### 5.1 `tools/colour.js`
 
+All colour functions are pure and accept `colourRules` as an argument.
+
 | Function | Behaviour |
 |---|---|
-| `analyseColour(hex)` | Returns `{ hsl, name, temperature, isNeutral }`. Name is the nearest entry in `named_colours` by distance in a perceptual colour space (or simple RGB distance if time is short). |
-| `suggestHarmonies(hex, scheme)` | Rotates hue by the angles in `harmony_angles`, keeps saturation and lightness within wearable bounds, and returns up to 3 colours per scheme. Neutrals (low saturation) always pair, so return the neutral list. |
-| `paletteForSeason(season)` | Returns the season palette. |
-| `scoreOutfit(garments[])` | Returns `{ score: 0-100, reasons: [] }`. Rules: at most 3 non-neutral hues, penalise clashing hue pairs (hue distance 60 to 100 degrees with both saturated), reward a neutral base, reward a harmony match, check formality consistency. Every deduction or bonus adds a human-readable line to `reasons`. |
+| `analyseColour(hex, colourRules)` | Returns `{ hex, hsl: { h: 0-360, s: 0-1, l: 0-1 }, name, temperature: "warm\|cool\|neutral", isNeutral }`. Name and temperature are taken from the nearest entry in `named_colours` by `deltaE76` distance (CIE Lab, D65). `isNeutral` is true if `s < 0.15`, or `l < 0.10`, or `l > 0.94`, or the nearest named colour's name is in `colourRules.neutrals`. Invalid hex throws. |
+| `suggestHarmonies(hex, scheme, colourRules)` | Returns `{ scheme, colours: [{hex, name}], note }`. Schemes: `complementary`, `analogous`, `triadic` (rotated by angles in `harmony_angles`), and `neutral-pair`. HSL saturation and lightness are clamped within `wearable_bounds`. For `neutral-pair`, returns up to 3 entries from `named_colours` in `neutrals` with greatest lightness contrast. If the base colour is neutral and scheme != `neutral-pair`, returns `colours: []` and note: `"Neutral base: pairs with almost anything; use the neutral-pair or an occasion palette."` Returns at most 3 colours, deduplicated by hex. |
+| `paletteForSeason(season, colourRules)` | Returns `[{hex, name}]` (names resolved via `analyseColour`). Unknown season throws. |
+| `paletteForOccasion(occasion, colourRules)` | Returns `[{hex, name}]` (names resolved via `analyseColour`). Unknown occasion throws. |
+| `scoreOutfit(garments, colourRules)` | Returns `{ score: 0-100, reasons: string[], breakdown: [{rule, delta}] }`. Base score = 60, clamped to 0..100. Rules applied:<br>• `neutral_base`: +10 if at least one garment is neutral.<br>• `all_neutral`: +10 if there are no chromatic garments.<br>• `hue_count`: chromatic garments grouped into hue families (hueDistance <= 25°). 1 family +10, 2 families +5, 3 families 0, >=4 families -20.<br>• Pair rules (unique chromatic pairs): analogous (d <= 40°) +5, complementary (\|d-180°\| <= 20°) +8, triadic (\|d-120°\| <= 15°) +5 (total pair bonus capped at +12); clash (both s > 0.5 and 50° <= d <= 100°) -12 (total clash penalty capped at -24).<br>• `formality` spread (casual=0, smart=1, formal=2): spread 0 -> +5, spread 1 -> 0, spread 2 -> -15.<br>Reasons and breakdown line up one-to-one. Throws if a garment lacks or has invalid `colour_hex`. |
 
 ### 5.2 `tools/pattern.js`
 
+All pattern functions are pure and accept `patterns` as an argument.
+
 | Function | Behaviour |
 |---|---|
-| `checkPatternPairing(a, b)` | Looks up `pairing_rules` (order-insensitive). Returns `{ verdict, reason }`, or `{ verdict: "ok", reason: "no specific rule" }`. |
-| `suggestCompanion(pattern)` | Returns patterns whose verdict with `pattern` is `good`. |
+| `checkPatternPairing(a, b, patterns)` | Looks up `pairing_rules` (order-insensitive). Returns `{ verdict: "good" \| "ok" \| "avoid", reason: string }`. If no explicit rule, returns `{ verdict: "ok", reason: "no specific rule" }`. Unknown pattern names throw. |
+| `suggestCompanions(pattern, patterns)` | Returns an alphabetical array of pattern names whose pairing verdict with `pattern` is `"good"`. Unknown pattern throws. |
+| `scaleAdvice(patterns)` | Returns the `scale_rule` string from `patterns`. |
 
 ### 5.3 `tools/perfume.js`
 
-`matchPerfumes(query, k = 3)` where:
+`matchPerfumes(query, perfumes, { k = 3, threshold = 40 } = {})` where:
 
 ```js
 query = {
-  occasion, season, timeOfDay,     // required: occasion; the others may be defaulted
-  vibe: [],                        // from tone_map or user wording
-  intensity,                       // optional
-  budget,                          // optional: budget | mid | premium
-  avoidNotes: []                   // optional
+  occasion,            // required: one of OCCASIONS
+  season,              // optional: one of SEASONS
+  timeOfDay,           // optional: one of TIMES
+  vibe: [],            // optional: array of VIBES
+  projection,          // optional: soft | moderate | strong
+  minLongevityHours,   // optional: number
+  marketedFor,         // optional: men | women | unisex
+  budget,              // optional: budget | mid | premium (maximum band)
+  avoidNotes: [],      // optional: array of lowercase/partial note strings
+  requireNotes: []     // optional: array of required note strings
 }
 ```
 
-1. **Hard filters:** drop any fragrance containing an avoided note in any note list; drop any above the budget band.
-2. **Score** each remaining fragrance (0 to 100): occasion 30, season 25, vibe 20, intensity 10, time of day 5, budget fit 10. Use proportional credit for list fields (matches divided by requested).
-3. Return the top `k` as `{ id, name, brand, score, reasons[], matched: {...} }`.
-4. If the best score is below a threshold (default 40), return `{ results: [], reason: "no close match" }`. The agent must then say so, never invent.
+1. **Hard filters:** (applied first; counts recorded in `filtered_out`):
+   - `avoidNotes`: drop entry if any avoided term is a case-insensitive substring of any note in top, heart, or base.
+   - `requireNotes`: drop entry unless EVERY required term is a case-insensitive substring of some note in top, heart, or base.
+   - `budget`: "budget" keeps budget only; "mid" keeps budget and mid; "premium" keeps all. Null price band is dropped only when a budget is specified.
+   - `marketedFor`: "men" keeps men and unisex; "women" keeps women and unisex; "unisex" keeps unisex only.
+2. **Score** (0 to 100):
+   - Weights (`PERFUME_WEIGHTS`): occasion 25, season 20, vibe 20, projection 10, longevity 5, timeOfDay 5, budgetFit 10, consensusRank 5.
+   - Only requested dimensions count towards `possible` (consensusRank always counts). Final score = `Math.round(earned / possible * 100)`.
+   - `occasion`: 1.0 if exact match; 0.6 if matches any alias in `OCCASION_ALIASES`; 0 otherwise.
+   - `season`: 1.0 if listed, 0 otherwise.
+   - `vibe`: matches / requested count.
+   - `projection`: exact 1.0, adjacent level 0.5, otherwise 0. Unknown (null) earns 0.
+   - `longevity`: 1.0 if `longevity_max_hours >= minLongevityHours`, else `max / min` (0 to 1). Unknown earns 0.
+   - `timeOfDay`: 1.0 if listed, 0 otherwise.
+   - `budgetFit`: same band as requested 1.0, 1 band cheaper 0.7, 2 bands cheaper 0.4. Null earns 0.
+   - `consensusRank`: 0 if rank is null; else `1 - (rank - 1) / maxRankInInput` clamped to 0..1.
+   - Low confidence multiplier: if `confidence === "low"`, multiply score by 0.9 (rounded).
+   - Deterministic tie-breaking: verified true first, then lower rank (nulls last), then id ascending.
+3. **Return shape:**
+```json
+{
+  "results": [
+    {
+      "id": "p_001",
+      "name": "Aventus",
+      "brand": "Creed",
+      "score": 85,
+      "reasons": ["Matches occasion college_fest via party alias"],
+      "matched": { "occasion": "alias", "season": true, "vibe": ["confident"], "projection": "exact" },
+      "caveats": ["time_of_day inferred from heuristic table"]
+    }
+  ],
+  "reason": null,
+  "best_score": 85,
+  "filtered_out": { "avoidNotes": 0, "requireNotes": 0, "budget": 0, "marketedFor": 0 },
+  "considered": 20
+}
+```
+If best score < threshold (default 40), `results` is `[]` and `reason` is `"no close match"`.
 
 ### 5.4 `tools/image.js`
 
@@ -237,34 +313,60 @@ Limit the image size (for example 5 MB) and reject unsupported types with a frie
 
 ## 6. Agent loop
 
-### 6.1 Slots
+### 6.1 Intents & Slots
 
+**Supported Intents:**
+- `full_look`: Recommends a complete wardrobe palette/outfit plus a matching fragrance. Requires: `occasion`.
+- `pairing_only`: Pairs garments, colours, or prints with a known anchor piece. Requires: anchor garment or colour.
+- `fragrance_only`: Matches perfumes for an occasion without full styling. Requires: `occasion`.
+- `greeting_help`: Explains agent capabilities and offers example requests. Requires: none.
+- `out_of_scope`: Politely explains boundaries for non-fashion tasks or outcome guarantees. Requires: none.
+
+**Slots Data Contract:**
 ```js
 slots = {
-  occasion,        // REQUIRED. one of the occasion values or free text mapped to one
-  season,          // optional. default: derive from the current date and say so in assumptions
-  timeOfDay,       // optional. default: infer from the occasion, else "evening"
-  colourPrefs: [], // optional
-  budget,          // optional
-  avoidNotes: [],  // optional
-  garments: [],    // optional. from text or image
-  intent           // "full_look" | "pairing_only" | "fragrance_only" | "out_of_scope"
+  intent,              // full_look | pairing_only | fragrance_only | greeting_help | out_of_scope
+  unsupported: [],     // array of: guarantee | live_price_stock | medical_allergy
+  occasion,            // REQUIRED for full_look & fragrance_only (one of OCCASIONS or null)
+  season,              // optional (SEASONS or null). Default: derive from date
+  timeOfDay,           // optional (TIMES or null). Default: infer from occasion
+  tone,                // optional: dark | light | pastel | bright | earthy | neutral | null
+  colourPrefs: [],     // optional array of strings
+  vibe: [],            // optional array of VIBES
+  projection,          // optional: soft | moderate | strong
+  minLongevityHours,   // optional number
+  budgetInrMax,        // optional number (INR amount)
+  budget,              // optional (PRICE_BANDS or null)
+  marketedFor,         // optional: men | women | unisex
+  avoidNotes: [],      // optional array of lowercase note substrings to exclude
+  requireNotes: [],    // optional array of required note substrings
+  garments: [],        // array of { type, colourName, colourHex, pattern, formality }
+  acknowledgeConflict  // boolean (set when user explicitly insists on mismatched formality)
 }
 ```
 
-### 6.2 Steps
+### 6.2 Session Memory & Multi-turn
+- In-memory store keyed by `${channel}:${userId}`.
+- Stores `{ slots, lastQuestion, updatedAt }`.
+- TTL: 30 minutes; max capacity: 500 sessions (LRU eviction).
+- Follow-up requests update previously stored slots (`mergeSlots`), preserving prior constraints while updating new ones.
 
-1. **Understand.** One LLM call returns slots as JSON, validated with `zod`. Use low temperature.
-2. **Clarify.** Ask **one** short question and stop if: the occasion is missing; the request is contradictory (for example formal wedding in gym wear); or image confidence is low. Never ask more than one question per turn. Otherwise fill defaults and record each one in `assumptions[]`.
-3. **Refuse or redirect.** If `intent = out_of_scope`, or the request asks for guarantees, live prices or stock, reply with a short, honest limit and one useful alternative.
-4. **Plan.** `planner.js` produces a 4 to 6 line plan (for example "1. Read the request. 2. Build the colour palette. 3. Check patterns. 4. Pick fragrance. 5. Verify. 6. Prepare files."). Send it as a progress message if the adapter supports it, and include it in the trace.
-5. **Act.**
-   - Wardrobe specialist: palette, harmonies, pattern pairing, `scoreOutfit`.
-   - Fragrance specialist: derive vibe tags from `tone_map`, then `matchPerfumes`.
-   - These two are independent, so run them in parallel.
-6. **Compose.** One LLM call receives only the **structured results** (palette, scores, reasons, top fragrances, assumptions) and writes the user-facing explanation. It must not add facts that are not in the input.
-7. **Check.** See §6.3. On failure, revise once with the failure reasons, then fall back to a safe, shorter reply.
-8. **Format and deliver.** Build the chat markdown, the CSV, the Markdown plan and the mood-board PNG.
+### 6.3 Orchestrator Execution Flow
+1. **Echo Mode Check:** If LLM is not configured, fall back immediately to M0 echo behavior.
+2. **Image Input Check:** If images are attached without text and vision tool is absent, ask user to describe garment colours/patterns.
+3. **Understand:** Call `understand(userText, { previousSlots, lastQuestion }, llm)` with Zod validation and one repair attempt on error.
+4. **Merge & Normalise:** Merge with session slots and normalise (INR budget to bands, named colours to hex, defaults to assumptions).
+5. **Intent Routing & Refusals:**
+   - `greeting_help` and `out_of_scope` return templates immediately.
+   - If unsupported flags are present with enough slots, prepend a limits notice; otherwise refuse and redirect.
+6. **Slot Clarification:** Check required slots. If missing, ask exactly ONE question, save to session, and stop.
+7. **Formality Conflict:** If user garment formality clashes by 2 levels (e.g. gym wear to formal wedding) and `acknowledgeConflict` is false, ask ONE clarifying question, save session, and stop.
+8. **Plan:** Build deterministic 4-6 line execution plan for active specialists. Set in `response.progress`.
+9. **Act:** Run wardrobe specialist and fragrance specialist in parallel (`Promise.all`).
+   - If fragrance matching yields 0 results, apply `RELAXATION_ORDER` cumulatively: drop `minLongevityHours` -> drop `projection` -> drop `timeOfDay` -> drop `season` -> raise `budget` to premium. (Never relax `avoidNotes`, `requireNotes`, `marketedFor`, or `occasion`).
+10. **Compose:** Call `composeReply` where LLM generates only `why_it_works`, `fragrance_why`, and `tip`. The code deterministically builds tables, reasons, notes, assumptions, and caveats.
+    - If the LLM mentions an unrecommended fragrance, or fails/times out, use `renderFallbackReply`.
+11. **Session Save & Trace:** Save final slots in session. Attach execution `trace` ({ intent, slots, assumptions, plan, toolCalls, relaxed, clarification, llmCalls, totalMs }). Max 2 LLM calls per request.
 
 ### 6.3 Checker (programmatic first, LLM only for tone)
 
@@ -360,6 +462,7 @@ LOG_LEVEL=info
 LLM_PROVIDER=gemini
 LLM_API_KEY=
 LLM_MODEL=                  # set to a current model ID from the provider docs
+LLM_TIMEOUT_MS=20000
 
 NONILION_BASE_URL=          # TODO(NONILION_GUIDE)
 NONILION_PAIRING_CODE=      # TODO(NONILION_GUIDE)
@@ -381,7 +484,7 @@ NONILION_WEBHOOK_SECRET=    # TODO(NONILION_GUIDE)
 
 - **Unit tests:** colour maths and naming, harmony outputs, `scoreOutfit` on known good and bad outfits, pattern lookups, fragrance filters and scoring, every checker rule (C1 to C6).
 - **Dataset tests:** schema validation, unique IDs, every referenced season and occasion is in the allowed lists.
-- **Golden tests:** the 10 requests in `prd.md` §8. Run them with the LLM mocked for CI-style checks, then **manually inside Nonilion** with the real model before 13 Nov.
+- **Golden tests:** the 10 requests in `prd.md` §8. Run them with the LLM mocked for CI-style checks, and via `npm run golden:live` against the real LLM and datasets before live judging.
 - **Pre-demo checklist:** health endpoint returns OK; one full request passes in Nonilion; keys are valid and credits are available; backup video is recorded.
 
 ## 12. Deployment

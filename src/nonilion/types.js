@@ -31,6 +31,7 @@
  * @property {AttachmentItem[]} [files] - Generated file attachments (e.g. CSV shopping list, MD plan).
  * @property {AttachmentItem[]} [images] - Generated image attachments (e.g. mood-board PNG).
  * @property {string[]} [progress] - Step-by-step progress updates recorded during planning/execution.
+ * @property {object} [trace] - Execution trace metadata (intent, slots, assumptions, plan, toolCalls, relaxed, clarification, llmCalls, totalMs).
  */
 
 export {};

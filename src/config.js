@@ -32,6 +32,7 @@ const envSchema = z.object({
   LLM_PROVIDER: z.string().default('gemini'),
   LLM_API_KEY: z.string().optional().transform((v) => (v && v.trim() !== '' ? v.trim() : undefined)),
   LLM_MODEL: z.string().optional().transform((v) => (v && v.trim() !== '' ? v.trim() : undefined)),
+  LLM_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
 
   // Nonilion bot connection variables (to be completed when developer guide arrives)
   NONILION_BASE_URL: z.string().optional().transform((v) => (v && v.trim() !== '' ? v.trim() : undefined)),

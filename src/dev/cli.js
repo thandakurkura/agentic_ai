@@ -8,20 +8,28 @@
 
 import readline from 'node:readline/promises';
 import { handleRequest } from '../agent/orchestrator.js';
+import { defaultSessionStore } from '../agent/session.js';
 import { config } from '../config.js';
 
 async function main() {
+  const showTrace = process.argv.includes('--trace');
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
   });
 
   console.log('========================================================');
-  console.log(' StyleScent CLI Chat (Milestone M0)');
+  console.log(' StyleScent CLI Chat (Milestone M3)');
   console.log(` Mode: ${config.isEchoMode ? 'Echo Mode (no LLM key configured)' : 'LLM Mode'}`);
+  console.log(` Trace: ${showTrace ? 'Enabled (--trace)' : 'Disabled'}`);
   console.log(' Type your message and press Enter.');
+  console.log(" Type '/reset' to clear conversation memory.");
   console.log(" Type 'exit' or 'quit' to stop.");
   console.log('========================================================\n');
+
+  const channel = 'terminal';
+  const userId = 'cli';
 
   try {
     while (true) {
@@ -37,14 +45,26 @@ async function main() {
         break;
       }
 
+      if (trimmed === '/reset') {
+        defaultSessionStore.clear(channel, userId);
+        console.log('\n[Session memory cleared]\n');
+        continue;
+      }
+
       try {
         const response = await handleRequest({
           text: trimmed,
-          userId: 'cli-user',
-          channel: 'terminal',
+          userId,
+          channel,
         });
 
-        console.log(`\nStyleScent > ${response.text}\n`);
+        console.log(`\nStyleScent >\n\n${response.text}\n`);
+
+        if (showTrace && response.trace) {
+          console.log('-------------------- [TRACE] --------------------');
+          console.log(JSON.stringify(response.trace, null, 2));
+          console.log('-------------------------------------------------\n');
+        }
       } catch (err) {
         console.error(`\nError: ${err.message}\n`);
       }

@@ -10,7 +10,11 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "chat": "node src/dev/cli.js",
-    "test": "node --test"
+    "test": "node --test",
+    "data:import": "node scripts/import-research.js",
+    "data:report": "node scripts/data-report.js",
+    "match": "node scripts/try-match.js",
+    "golden:live": "node scripts/run-golden.js"
   },
   "dependencies": {
     "@google/genai": "^3.0.0",

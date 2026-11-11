@@ -80,7 +80,7 @@ The agent is built for **personal use first**. P3 is how we describe the post-ha
 | FR-5 | P0 | **Plan:** produce a short visible plan (understand, wardrobe, fragrance, check, deliver) before acting. |
 | FR-6 | P0 | **Colour tool:** deterministic colour analysis and harmony suggestions (complementary, analogous, triadic, neutral pairing) with seasonal palettes. |
 | FR-7 | P1 | **Pattern tool:** rules for pairing patterns (for example stripes with solids, how to mix two prints) with a verdict and a reason. |
-| FR-8 | P0 | **Fragrance matcher:** score dataset fragrances against occasion, season, vibe, intensity, time of day and budget; return the top 3 with reasons. |
+| FR-8 | P0 | **Fragrance matcher:** score dataset fragrances against occasion, season, vibe, projection and longevity, time of day and budget; return the top 3 with reasons. |
 | FR-9 | P1 | **Image input:** accept a garment photo, extract colours and pattern, confirm with the user if confidence is low. |
 | FR-10 | P0 | **Checker:** before replying, verify every fragrance exists in the dataset, avoided notes are excluded, the outfit colour score passes the threshold, and the reply contains assumptions. Allow one revision loop. |
 | FR-11 | P0 | **Chat output:** a formatted reply with headings, a table, and the reasons. |
@@ -130,7 +130,7 @@ The agent is built for **personal use first**. P3 is how we describe the post-ha
 
 | Dataset | Target size | Fields (see `design.md` §4) |
 |---|---|---|
-| Fragrances | about 60 entries, varied by family, season, occasion and price band | name, brand, family, notes, seasons, occasions, vibe tags, intensity, price band |
+| Fragrances | about 60 entries, varied by family, season, occasion and price band | name, brand, marketed_for, family, notes, seasons, occasions, vibe tags, projection, longevity, price band |
 | Colour rules | 4 seasonal palettes, about 8 occasion palettes, a named-colour table | hex values, temperature, neutral flag |
 | Pattern rules | 8 pattern types and about 20 pairing rules | pattern pair, verdict, reason |
 

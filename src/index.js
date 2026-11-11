@@ -13,6 +13,10 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { logger } from './logger.js';
 import { handleRequest } from './agent/orchestrator.js';
+import { loadData } from './data/load.js';
+
+// Load and validate core datasets at startup (fails fast if corrupted or invalid)
+const datasets = loadData();
 
 // Read version safely from package.json
 let version = '0.1.0';
@@ -38,6 +42,13 @@ app.get('/health', (req, res) => {
     status: 'ok',
     uptime: process.uptime(),
     version,
+    data: {
+      perfumes: datasets.perfumes.length,
+      colour_rules: datasets.colourRules.named_colours.length,
+      patterns: datasets.patterns.patterns.length,
+      pairing_rules: datasets.patterns.pairing_rules.length,
+      tone_mappings: datasets.toneMap.length,
+    },
   });
 });
 
@@ -45,7 +56,7 @@ app.get('/health', (req, res) => {
 if (config.NODE_ENV !== 'production') {
   app.post('/dev/chat', async (req, res, next) => {
     try {
-      const { text } = req.body || {};
+      const { text, userId, channel } = req.body || {};
       if (typeof text !== 'string') {
         return res
           .status(400)
@@ -54,8 +65,8 @@ if (config.NODE_ENV !== 'production') {
 
       const response = await handleRequest({
         text,
-        userId: 'dev-user',
-        channel: 'dev-http',
+        userId: userId || 'dev-user',
+        channel: channel || 'dev-http',
       });
 
       res.status(200).json(response);

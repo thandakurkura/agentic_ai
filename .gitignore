@@ -1,11 +1,9 @@
-<<<<<<< HEAD
 node_modules/
 .env
 out/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-=======
 # Logs
 logs
 *.log
@@ -155,4 +153,3 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
->>>>>>> cf5e504aef1df7deeb565c8fea33dbd2f0c423a3

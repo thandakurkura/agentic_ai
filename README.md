@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # StyleScent
 
 StyleScent is an AI personal-styling agent built for Nonilion (INNOVORTEX 4.0 hackathon). It plans outfits (colours, patterns, pairings) and matching fragrances grounded in curated datasets and deterministic rules.
@@ -54,3 +55,6 @@ This repository currently implements **Milestone M0**:
 - `GET /health`: Returns service health, uptime, and version (`200 OK`).
 - `POST /dev/chat`: Local testing chat endpoint accepting `{ "text": "..." }` (available in non-production).
 - `POST /webhook/nonilion`: Nonilion webhook receiver (returns `501 Not Implemented` stub until official Nonilion developer guide is provided).
+=======
+# agentic_ai
+>>>>>>> cf5e504aef1df7deeb565c8fea33dbd2f0c423a3
